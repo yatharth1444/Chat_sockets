@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Socket Chat</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    header {
+      background: #4a90e2;
+      color: white;
+      padding: 1rem;
+      text-align: center;
+      font-size: 1.5rem;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    }
+
+    #container {
+      display: flex;
+      flex: 1;
+    }
+
+    aside {
+      width: 25%;
+      background: #f5f5f5;
+      padding: 1rem;
+      border-right: 1px solid #ddd;
+      overflow-y: auto;
+    }
+
+    main {
+      width: 75%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #chat {
+      flex: 1;
+      padding: 1rem;
+      overflow-y: auto;
+      background: #fff;
+      border-bottom: 1px solid #eee;
+    }
+
+    #message-form {
+      display: flex;
+      padding: 0.5rem;
+      background: #f9f9f9;
+    }
+
+    #message-input {
+      flex: 1;
+      padding: 0.5rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+    button {
+      margin-left: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: #4a90e2;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    #dark-toggle {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      background: transparent;
+      border: none;
+      font-size: 1.2rem;
+      cursor: pointer;
+    }
+
+    .dark {
+      background: #1e1e1e;
+      color: white;
+    }
+
+    .dark #chat {
+      background: #2e2e2e;
+    }
+
+    .dark #message-input {
+      background: #333;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>💬 Socket Chat</h1>
+    <button id="dark-toggle" type="button">🌙</button>
+</header>
+
+  <div id="container">
+    <aside id="user-list">
+      <h3>🟢 Online</h3>
+      <ul id="users"></ul>
+    </aside>
+
+    <main>
+      <div id="chat"></div>
+      <form id="message-form">
+        <input type="text" id="message-input" placeholder="Type a message...">
+        <button type="submit">Send</button>
+      </form>
+    </main>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+
+  const chat = document.getElementById("chat");
+  const usersList = document.getElementById("users");
+  const messageForm = document.getElementById("message-form");
+  const messageInput = document.getElementById("message-input");
+  const darkToggle = document.getElementById("dark-toggle");
+
+  const userName = prompt("Enter your username") || `User-${Math.floor(Math.random() * 1000)}`;
+  socket.emit("join", userName);
+
+  let typingTimeout;
+
+  socket.on("chatMessage", ({ user, message, timestamp }) => {
+    addMessage(`${user} (${timestamp}): ${message}`);
+    if (document.hidden) notify(`${user}: ${message}`);
+  });
+
+  socket.on("privateMessage", ({ from, to, message, timestamp }) => {
+    const msg = `(Private) ${from} ➤ ${to} (${timestamp}): ${message}`;
+    addMessage(msg, true);
+  });
+
+  socket.on("chatHistory", (history) => {
+    history.forEach(({ user, message, timestamp }) => {
+      addMessage(`${user} (${timestamp}): ${message}`);
+    });
+  });
+
+  socket.on("userJoined", (user) => {
+    addMessage(`${user} joined the chat`);
+  });
+
+  socket.on("userLeft", (user) => {
+    addMessage(`${user} left the chat`);
+  });
+
+  socket.on("typing", (user) => {
+    const typingEl = document.getElementById("typing") || document.createElement("div");
+    typingEl.id = "typing";
+    typingEl.style.fontStyle = "italic";
+    typingEl.textContent = `${user} is typing...`;
+    chat.appendChild(typingEl);
+    chat.scrollTop = chat.scrollHeight;
+  });
+
+  socket.on("stopTyping", () => {
+    const typingEl = document.getElementById("typing");
+    if (typingEl) typingEl.remove();
+  });
+
+  socket.on("userList", (users) => {
+    usersList.innerHTML = "";
+    users.forEach((user) => {
+      const li = document.createElement("li");
+      li.textContent = user;
+      li.style.cursor = "pointer";
+      li.onclick = () => {
+        const pm = prompt(`Send private message to ${user}:`);
+        if (pm) socket.emit("privateMessage", { toUser: user, message: pm });
+      };
+      usersList.appendChild(li);
+    });
+  });
+
+  socket.on("statusUpdate", (statusMap) => {
+    Array.from(usersList.children).forEach((li) => {
+      const status = statusMap[li.textContent] || "offline";
+      li.textContent = `${li.textContent} (${status})`;
+    });
+  });
+
+  messageForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const message = messageInput.value.trim();
+    if (message) {
+      socket.emit("chatMessage", { user: userName, message });
+      messageInput.value = "";
+      socket.emit("stopTyping", userName);
+    }
+  });
+
+  messageInput.addEventListener("input", () => {
+    socket.emit("typing", userName);
+    clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => socket.emit("stopTyping", userName), 1000);
+  });
+
+  function addMessage(text, isPrivate = false) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    if (isPrivate) div.style.color = "#e91e63";
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function notify(message) {
+    if (Notification.permission === "granted") {
+      new Notification("💬 New message", { body: message });
+    }
+  }
+
+  if (Notification.permission !== "granted") {
+    Notification.requestPermission();
+  }
+
+  darkToggle.addEventListener("click", () => {
+    document.body.classList.toggle("dark");
+  });
+</script>
+</body>
+</html>
